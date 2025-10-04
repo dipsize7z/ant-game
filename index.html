@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Ant Game</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #000;
+    color: #fff;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+    touch-action: none; /* чтобы не мешали скролл/зум жесты */
+  }
+  .wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: center;
+  }
+  h1 {
+    margin: 0 0 10px;
+    font-size: 28px;
+    text-align: center;
+  }
+  canvas {
+    background: repeating-linear-gradient(90deg, #1a1a1a 0 48px, #222 48px 96px),
+                repeating-linear-gradient(0deg, #1a1a1a 0 48px, #222 48px 96px);
+    border: 3px solid #222;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+    cursor: crosshair;
+    display: block;
+    touch-action: none;
+    max-width: 100vw;
+    max-height: 80vh;
+  }
+  .hint {
+    margin-top: 8px;
+    font-size: 14px;
+    color: #bbb;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ant Game 🐜</h1>
+    <canvas id="game"></canvas>
+    <div class="hint">Нажми или коснись муравья!</div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+
+  // настройки
+  const ANT_COUNT = 6;
+  const MIN_SIZE = 18;
+  const MAX_SIZE = 42;
+  const MAX_SPEED = 1.8;
+  const BLOOD_LIFE = 400;
+  const BLOOD_PARTICLES = 16;
+
+  let score = 0;
+  const ants = [];
+  const bloods = [];
+
+  function resizeCanvas() {
+    // адаптируем canvas под экран устройства
+    const w = Math.min(window.innerWidth * 0.95, 900);
+    const h = Math.min(window.innerHeight * 0.8, 560);
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    ctx.scale(dpr, dpr);
+  }
+
+  // создаём муравья
+  function makeAnt() {
+    const size = MIN_SIZE + Math.random() * (MAX_SIZE - MIN_SIZE);
+    return {
+      x: Math.random() * canvas.width / dpr,
+      y: Math.random() * canvas.height / dpr,
+      dx: (Math.random() - 0.5) * 2,
+      dy: (Math.random() - 0.5) * 2,
+      size,
+      angle: 0,
+      alive: true,
+      wanderTimer: Math.random() * 120 + 40,
+    };
+  }
+
+  for (let i = 0; i < ANT_COUNT; i++) ants.push(makeAnt());
+
+  function drawAntShape(ctx, size) {
+    ctx.fillStyle = '#0c0c0c';
+    ctx.strokeStyle = '#050505';
+    ctx.lineWidth = Math.max(1, size * 0.06);
+
+    ctx.beginPath();
+    ctx.ellipse(0, size * 0.15, size * 0.42, size * 0.28, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    ctx.beginPath();
+    ctx.ellipse(-size * 0.14, 0, size * 0.28, size * 0.2, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    ctx.beginPath();
+    ctx.ellipse(-size * 0.4, -size * 0.18, size * 0.18, size * 0.14, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    ctx.strokeStyle = '#070707';
+    ctx.lineWidth = Math.max(1, size * 0.06);
+    for (let side = -1; side <= 1; side += 2) {
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.05, -size * 0.08);
+      ctx.lineTo(size * 0.35 * side, -size * 0.5);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.08, 0);
+      ctx.lineTo(size * 0.4 * side, 0);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.02, size * 0.12);
+      ctx.lineTo(size * 0.35 * side, size * 0.5);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = Math.max(1, size * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.45, -size * 0.28);
+    ctx.quadraticCurveTo(-size * 0.9, -size * 0.7, -size * 1.2, -size * 0.6);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.35, -size * 0.26);
+    ctx.quadraticCurveTo(-size * 0.7, -size * 0.6, -size * 1.05, -size * 0.4);
+    ctx.stroke();
+  }
+
+  function spawnBlood(x, y, baseSize) {
+    const particles = [];
+    for (let i = 0; i < BLOOD_PARTICLES; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = (0.2 + Math.random() * 1.0) * baseSize;
+      particles.push({
+        x: x + Math.cos(ang) * (Math.random() * baseSize * 0.6),
+        y: y + Math.sin(ang) * (Math.random() * baseSize * 0.6),
+        r: Math.random() * (baseSize * 0.12) + (baseSize * 0.04),
+        life: 0,
+        vx: Math.cos(ang) * (Math.random() * 0.6 + 0.2),
+        vy: Math.sin(ang) * (Math.random() * 0.6 + 0.2),
+      });
+    }
+    bloods.push({ particles, life: 0, opacity: 1 });
+  }
+
+  function handlePointer(x, y) {
+    let hit = false;
+    const sorted = ants.slice().sort((a,b)=> Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y));
+    for (const a of sorted) {
+      if (!a.alive) continue;
+      const dist = Math.hypot(a.x - x, a.y - y);
+      const radius = a.size * 0.6;
+      if (dist < radius) {
+        a.alive = false;
+        hit = true;
+        score++;
+        spawnBlood(a.x, a.y, a.size);
+        setTimeout(() => Object.assign(a, makeAntRespawn()), 1000 + Math.random() * 1800);
+        break;
+      } else if (dist < 120) {
+        const angle = Math.atan2(a.y - y, a.x - x);
+        a.dx += Math.cos(angle) * 2.6;
+        a.dy += Math.sin(angle) * 2.6;
+      }
+    }
+    return hit;
+  }
+
+  canvas.addEventListener('click', e => {
+    const r = canvas.getBoundingClientRect();
+    handlePointer(e.clientX - r.left, e.clientY - r.top);
+  });
+
+  canvas.addEventListener('touchstart', e => {
+    const r = canvas.getBoundingClientRect();
+    for (let t of e.touches)
+      handlePointer(t.clientX - r.left, t.clientY - r.top);
+    e.preventDefault();
+  }, {passive:false});
+
+  function makeAntRespawn() {
+    const size = MIN_SIZE + Math.random() * (MAX_SIZE - MIN_SIZE);
+    const edge = Math.floor(Math.random()*4);
+    const w = canvas.width / dpr, h = canvas.height / dpr;
+    let x, y, dx, dy;
+    const speed = 0.6 + Math.random()*1.2;
+    switch(edge) {
+      case 0: x = -size - Math.random()*40; y = Math.random()*h; dx = speed; dy = (Math.random()-0.5)*1.2; break;
+      case 1: x = w + size + Math.random()*40; y = Math.random()*h; dx = -speed; dy = (Math.random()-0.5)*1.2; break;
+      case 2: x = Math.random()*w; y = -size - Math.random()*40; dx = (Math.random()-0.5)*1.2; dy = speed; break;
+      default: x = Math.random()*w; y = h + size + Math.random()*40; dx = (Math.random()-0.5)*1.2; dy = -speed; break;
+    }
+    return { x, y, dx, dy, size, angle: 0, alive: true, wanderTimer: Math.random()*120+40 };
+  }
+
+  function maybeRemoveIfFar(a) {
+    const margin = a.size * 2 + 60;
+    const w = canvas.width / dpr, h = canvas.height / dpr;
+    if (a.x < -margin || a.x > w + margin || a.y < -margin || a.y > h + margin) {
+      a.alive = false;
+      setTimeout(()=> Object.assign(a, makeAntRespawn()), 400 + Math.random()*1200);
+    }
+  }
+
+  function update() {
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    const w = canvas.width / dpr, h = canvas.height / dpr;
+
+    const grid = 48;
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    for (let gx = 0; gx < w; gx += grid)
+      for (let gy = 0; gy < h; gy += grid)
+        ctx.strokeRect(gx, gy, grid, grid);
+
+    for (let i = bloods.length-1; i >= 0; i--) {
+      const blood = bloods[i];
+      blood.life++;
+      blood.opacity = Math.max(0, 1 - blood.life / BLOOD_LIFE);
+      for (const p of blood.particles) {
+        const px = p.x + p.vx * Math.min(p.life, 14);
+        const py = p.y + p.vy * Math.min(p.life, 14);
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(130,10,10,${blood.opacity * 0.9})`;
+        ctx.ellipse(px, py, p.r, p.r * 0.7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        p.life++;
+      }
+      if (blood.life > BLOOD_LIFE + 120) bloods.splice(i,1);
+    }
+
+    for (const a of ants) {
+      if (!a.alive) continue;
+      a.x += a.dx;
+      a.y += a.dy;
+      a.wanderTimer--;
+      if (a.wanderTimer <= 0) {
+        a.dx += (Math.random()-0.5) * 0.8;
+        a.dy += (Math.random()-0.5) * 0.8;
+        a.wanderTimer = Math.random() * 120 + 60;
+      }
+      let sp = Math.hypot(a.dx, a.dy);
+      if (sp > MAX_SPEED) {
+        a.dx = (a.dx / sp) * MAX_SPEED;
+        a.dy = (a.dy / sp) * MAX_SPEED;
+      }
+      a.dx *= 0.995;
+      a.dy *= 0.995;
+      a.angle = Math.atan2(a.dy, a.dx);
+      maybeRemoveIfFar(a);
+      ctx.save();
+      ctx.translate(a.x, a.y);
+      ctx.rotate(a.angle + Math.PI / 2);
+      drawAntShape(ctx, a.size);
+      ctx.restore();
+    }
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '18px monospace';
+    ctx.fillText('Score: ' + score, 10, 26);
+
+    requestAnimationFrame(update);
+  }
+
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+  update();
+})();
+</script>
+</body>
+</html>
